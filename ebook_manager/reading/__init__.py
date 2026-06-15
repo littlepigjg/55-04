@@ -1,33 +1,34 @@
 from .database import ReadingDatabase, ReadingPosition, ReadingSession, ReadingGoal
+from .models_ext import ReadingPosition as Position, ReadingSession as Session, ReadingGoal as Goal
 
 __all__ = [
     'ReadingDatabase',
     'ReadingPosition',
     'ReadingSession',
     'ReadingGoal',
+    'Position',
+    'Session',
+    'Goal',
 ]
 
 
 def __getattr__(name):
-    if name == 'EPUBParser':
-        from .epub_parser import EPUBParser
-        return EPUBParser
-    elif name == 'PDFTracker':
-        from .pdf_tracker import PDFTracker
-        return PDFTracker
-    elif name == 'MOBITracker':
-        from .mobi_tracker import MOBITracker
-        return MOBITracker
-    elif name == 'ActivityMonitor':
-        from .activity_monitor import ActivityMonitor
-        return ActivityMonitor
-    elif name == 'ReadingVisualizer':
-        from .visualization import ReadingVisualizer
-        return ReadingVisualizer
-    elif name == 'GoalManager':
-        from .goal_manager import GoalManager
-        return GoalManager
-    elif name == 'ReadingTracker':
-        from .tracker import ReadingTracker
-        return ReadingTracker
+    lazy = {
+        'EPUBParser': '.epub_parser',
+        'PDFTracker': '.pdf_tracker',
+        'MOBITracker': '.mobi_tracker',
+        'ActivityMonitor': '.monitors.activity_monitor',
+        'ReadingVisualizer': '.visualization',
+        'GoalManager': '.goal_manager',
+        'ReadingTracker': '.tracker',
+        'SessionManager': '.session_manager',
+        'PositionManager': '.position_manager',
+        'SpeedCalculator': '.speed_calculator',
+        'SystemIdleDetector': '.monitors.idle_detector',
+        'WindowFocusMonitor': '.monitors.focus_monitor',
+    }
+    if name in lazy:
+        import importlib
+        mod = importlib.import_module(lazy[name], __package__)
+        return getattr(mod, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

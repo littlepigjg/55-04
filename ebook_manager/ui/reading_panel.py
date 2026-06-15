@@ -504,8 +504,12 @@ class ReadingControlPanel(QWidget):
         
         if self._is_tracking and self._current_book:
             try:
-                position = self.tracker.update_position_by_percentage(percentage)
-                self._update_position_display(position)
+                if self._current_format == 'mobi' and self._mobi_tracker:
+                    total_pages = self._mobi_tracker.get_total_pages()
+                    page = int(percentage * max(1, total_pages - 1))
+                    self.tracker.update_position_mobi(page)
+                else:
+                    position = self.tracker.update_position_by_percentage(percentage)
             except Exception:
                 pass
 
@@ -602,9 +606,11 @@ class ReadingControlPanel(QWidget):
             self.session_time_label.setText(f"⏱ 阅读时长: {hours:02d}:{minutes:02d}:{seconds:02d}")
         
         stats = self.tracker._activity_monitor.get_statistics()
-        self.key_presses_label.setText(f"⌨ {stats['key_presses']}")
-        self.clicks_label.setText(f"🖱 {stats['mouse_clicks']}")
-        self.scrolls_label.setText(f"📜 {stats['scrolls']}")
+        idle_sec = stats.get('system_idle_seconds', 0)
+        focus_lost = stats.get('focus_lost_count', 0)
+        self.key_presses_label.setText(f"⏳ 空闲{idle_sec}s")
+        self.clicks_label.setText(f"🖱 失焦{focus_lost}")
+        self.scrolls_label.setText(f"� {stats.get('heartbeat_ticks', 0)}")
         self.pauses_label.setText(f"⏸ {stats['pause_count']}")
         
         if self._current_book:
