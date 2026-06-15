@@ -71,25 +71,32 @@ class PositionQueries:
                     UPDATE reading_positions SET
                         chapter=?, chapter_index=?, paragraph_id=?,
                         paragraph_index=?, page_number=?, page_x=?, page_y=?,
-                        percentage=?, word_count=?, last_updated=?
+                        percentage=?, word_count=?, last_updated=?,
+                        mobi_record_index=?, mobi_byte_position=?, mobi_content_hash=?
                     WHERE id=?
                 """, (position.chapter, position.chapter_index, position.paragraph_id,
                       position.paragraph_index, position.page_number, position.page_x,
                       position.page_y, position.percentage, position.word_count,
-                      position.last_updated, row[0]))
+                      position.last_updated,
+                      position.mobi_record_index, position.mobi_byte_position,
+                      position.mobi_content_hash,
+                      row[0]))
                 pos_id = row[0]
             else:
                 cur.execute("""
                     INSERT INTO reading_positions
                     (book_id, file_path, file_format, chapter, chapter_index,
                      paragraph_id, paragraph_index, page_number, page_x, page_y,
-                     percentage, word_count, last_updated)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     percentage, word_count, last_updated,
+                     mobi_record_index, mobi_byte_position, mobi_content_hash)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """, (position.book_id, position.file_path, position.file_format,
                       position.chapter, position.chapter_index, position.paragraph_id,
                       position.paragraph_index, position.page_number, position.page_x,
                       position.page_y, position.percentage, position.word_count,
-                      position.last_updated))
+                      position.last_updated,
+                      position.mobi_record_index, position.mobi_byte_position,
+                      position.mobi_content_hash))
                 pos_id = cur.lastrowid
             cur.execute(
                 "UPDATE books SET last_read=?, status='reading' WHERE id=?",
@@ -112,6 +119,9 @@ class PositionQueries:
                     page_x=row['page_x'], page_y=row['page_y'],
                     percentage=row['percentage'], word_count=row['word_count'],
                     last_updated=row['last_updated'],
+                    mobi_record_index=row['mobi_record_index'] if 'mobi_record_index' in row.keys() else None,
+                    mobi_byte_position=row['mobi_byte_position'] if 'mobi_byte_position' in row.keys() else None,
+                    mobi_content_hash=row['mobi_content_hash'] if 'mobi_content_hash' in row.keys() else None,
                 )
             return None
 

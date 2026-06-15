@@ -42,8 +42,9 @@ class ReadingTracker:
         self._mobi_tracker: Optional[MOBITracker] = None
 
         self._activity_monitor = ActivityMonitor(
-            idle_threshold=60,
+            idle_threshold=180,
             heartbeat_interval=2.0,
+            focus_loss_grace=10,
             activity_callback=self._on_activity_event,
         )
 
@@ -163,8 +164,9 @@ class ReadingTracker:
         self._position_mgr.save(position)
         session_id = self._session_mgr.get_session_id()
         if session_id:
-            self._session_mgr.record_event(
-                "position_update",
+            self._activity_monitor.enqueue_write(
+                self.db.add_record,
+                session_id, book_id, "position_update",
                 PositionManager.position_to_dict(position),
             )
         self._notify('position_changed', position)
@@ -197,11 +199,15 @@ class ReadingTracker:
         if not self._mobi_tracker:
             raise RuntimeError("MOBI tracker not initialized")
         pos = self._mobi_tracker.get_position_from_page(page_number)
+        anchor = pos.anchor
         return self.update_position({
             'page_number': pos.page_number,
             'chapter_index': pos.chapter_index,
             'percentage': pos.percentage,
             'word_count': int(pos.percentage * self._mobi_tracker.get_estimated_word_count()),
+            'mobi_record_index': pos.record_index,
+            'mobi_byte_position': pos.byte_position,
+            'mobi_content_hash': anchor.content_hash if anchor else None,
         })
 
     def update_position_by_percentage(self, percentage: float) -> ReadingPosition:
@@ -229,6 +235,8 @@ class ReadingTracker:
     def end_reading(self) -> Dict[str, Any]:
         if not self._session_mgr.is_active():
             return {}
+
+        self._position_mgr.stop()
 
         activity_stats = self._activity_monitor.stop()
         book_id = self._session_mgr.get_book_id()

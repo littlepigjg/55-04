@@ -34,15 +34,20 @@ class ActivityState:
 
 
 class ActivityMonitor:
+    IDLE_THRESHOLD = 180
+    FOCUS_LOSS_GRACE = 10
+    PAUSE_CONFIRM_TICKS = 3
+    HEARTBEAT_INTERVAL = 2.0
+
     def __init__(self,
-                 idle_threshold: int = 60,
+                 idle_threshold: int = 180,
                  heartbeat_interval: float = 2.0,
-                 focus_check_interval: float = 3.0,
+                 focus_loss_grace: int = 10,
                  activity_callback: Optional[Callable[[ActivityEvent], None]] = None,
                  state_callback: Optional[Callable[[ActivityState], None]] = None):
         self.idle_threshold = idle_threshold
         self.heartbeat_interval = heartbeat_interval
-        self.focus_check_interval = focus_check_interval
+        self.focus_loss_grace = focus_loss_grace
         self.activity_callback = activity_callback
         self.state_callback = state_callback
 
@@ -56,7 +61,9 @@ class ActivityMonitor:
         self._write_queue: queue.Queue = queue.Queue()
 
         self._heartbeat_count = 0
-        self._focus_check_count = 0
+        self._focus_lost_since: Optional[datetime] = None
+        self._idle_since: Optional[datetime] = None
+        self._pause_pending_ticks = 0
 
     def _emit_event(self, event_type: str, details: Optional[Dict] = None):
         event = ActivityEvent(
@@ -97,12 +104,14 @@ class ActivityMonitor:
                 self.state.is_focused = is_focused
 
                 if not is_focused and prev_focused:
+                    self._focus_lost_since = now
                     self.state.focus_lost_count += 1
                     self._emit_event("focus_lost", {
                         "focus_lost_count": self.state.focus_lost_count
                     })
 
                 if is_focused and not prev_focused:
+                    self._focus_lost_since = None
                     self._emit_event("focus_gained", {
                         "idle_at_return": idle_seconds
                     })
@@ -111,13 +120,42 @@ class ActivityMonitor:
                 app_unfocused = not is_focused
 
                 if self.state.is_active:
-                    if system_idle or app_unfocused:
-                        self._pause_activity(
-                            reason="system_idle" if system_idle else "focus_lost"
-                        )
+                    should_pause = False
+                    pause_reason = ""
+
+                    if system_idle:
+                        if self._idle_since is None:
+                            self._idle_since = now
+                        should_pause = True
+                        pause_reason = "system_idle"
+                    else:
+                        self._idle_since = None
+
+                    if app_unfocused:
+                        if self._focus_lost_since is None:
+                            self._focus_lost_since = now
+                        focus_lost_duration = (now - self._focus_lost_since).total_seconds() if self._focus_lost_since else 0
+                        if focus_lost_duration >= self.focus_loss_grace:
+                            should_pause = True
+                            pause_reason = "focus_lost"
+                    else:
+                        self._focus_lost_since = None
+
+                    if should_pause:
+                        self._pause_pending_ticks += 1
+                        if self._pause_pending_ticks >= self.PAUSE_CONFIRM_TICKS:
+                            self._pause_activity(reason=pause_reason)
+                            self._pause_pending_ticks = 0
+                    else:
+                        self._pause_pending_ticks = 0
+
                 else:
-                    if not system_idle and is_focused:
+                    can_resume = (not system_idle) and is_focused
+                    if can_resume:
                         self._resume_activity()
+                        self._pause_pending_ticks = 0
+                        self._idle_since = None
+                        self._focus_lost_since = None
 
                 if self.state.is_active and self.state.session_start_time:
                     elapsed = (now - self.state.session_start_time).total_seconds()
@@ -138,7 +176,7 @@ class ActivityMonitor:
             except Exception as e:
                 logging.error(f"heartbeat error: {e}")
 
-            self._stop_event.wait(self.heartbeat_interval)
+            self._stop_event.wait(self.HEARTBEAT_INTERVAL)
 
     def _pause_activity(self, reason: str = "inactivity"):
         if not self.state.is_active:
@@ -156,17 +194,26 @@ class ActivityMonitor:
             return
         if self.state.last_pause_start:
             pause_duration = (datetime.now() - self.state.last_pause_start).total_seconds()
-            self.state.total_pause_seconds += int(pause_duration)
+            grace_seconds = self._calculate_grace_for_pause(pause_duration)
+            self.state.total_pause_seconds += max(0, int(pause_duration - grace_seconds))
             self.state.last_pause_start = None
         self.state.is_active = True
         self.state.last_activity_time = datetime.now()
         self._emit_event("resume", {})
 
+    def _calculate_grace_for_pause(self, pause_duration: float) -> int:
+        grace = self.focus_loss_grace
+        if pause_duration <= grace:
+            return int(pause_duration)
+        return grace
+
     def _drain_write_queue(self):
-        while not self._write_queue.empty():
+        drained = 0
+        while not self._write_queue.empty() and drained < 5:
             try:
                 func, args, kwargs = self._write_queue.get_nowait()
                 func(*args, **kwargs)
+                drained += 1
             except Exception as e:
                 logging.error(f"drain_write_queue error: {e}")
 
@@ -187,9 +234,14 @@ class ActivityMonitor:
         self.state.is_focused = True
         self.state.session_start_time = datetime.now()
         self.state.last_activity_time = datetime.now()
+        self._focus_lost_since = None
+        self._idle_since = None
+        self._pause_pending_ticks = 0
 
         self._emit_event("session_start", {
-            "monitoring": "system_idle + window_focus + heartbeat"
+            "monitoring": "system_idle + window_focus + heartbeat",
+            "idle_threshold": self.idle_threshold,
+            "focus_loss_grace": self.focus_loss_grace,
         })
 
     def stop(self) -> Dict:
@@ -253,5 +305,7 @@ class ActivityMonitor:
     def reset(self):
         self.state = ActivityState()
         self._heartbeat_count = 0
-        self._focus_check_count = 0
         self._events.clear()
+        self._focus_lost_since = None
+        self._idle_since = None
+        self._pause_pending_ticks = 0

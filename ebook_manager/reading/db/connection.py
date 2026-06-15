@@ -52,7 +52,7 @@ class DatabaseConnection:
         is_memory = self.db_path == ':memory:'
         if is_memory:
             if self._persistent_conn is None:
-                self._persistent_conn = sqlite3.connect(self.db_path)
+                self._persistent_conn = sqlite3.connect(self.db_path, check_same_thread=False)
                 self._persistent_conn.row_factory = sqlite3.Row
             return _MemorySafeConnection(self._persistent_conn, True)
         conn = sqlite3.connect(self.db_path)
@@ -92,6 +92,9 @@ class DatabaseConnection:
                 percentage REAL,
                 word_count INTEGER DEFAULT 0,
                 last_updated TEXT,
+                mobi_record_index INTEGER,
+                mobi_byte_position INTEGER,
+                mobi_content_hash TEXT,
                 FOREIGN KEY (book_id) REFERENCES books (id)
             );
 
@@ -149,3 +152,19 @@ class DatabaseConnection:
             );
         """)
             conn.commit()
+            self._migrate(conn)
+
+    def _migrate(self, conn):
+        try:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(reading_positions)")
+            columns = {row[1] for row in cursor.fetchall()}
+            if 'mobi_record_index' not in columns:
+                cursor.execute("ALTER TABLE reading_positions ADD COLUMN mobi_record_index INTEGER")
+            if 'mobi_byte_position' not in columns:
+                cursor.execute("ALTER TABLE reading_positions ADD COLUMN mobi_byte_position INTEGER")
+            if 'mobi_content_hash' not in columns:
+                cursor.execute("ALTER TABLE reading_positions ADD COLUMN mobi_content_hash TEXT")
+            conn.commit()
+        except Exception:
+            pass

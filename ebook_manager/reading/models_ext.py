@@ -18,6 +18,9 @@ class ReadingPosition:
     percentage: Optional[float] = None
     word_count: int = 0
     last_updated: str = field(default_factory=lambda: datetime.now().isoformat())
+    mobi_record_index: Optional[int] = None
+    mobi_byte_position: Optional[int] = None
+    mobi_content_hash: Optional[str] = None
 
 
 @dataclass
