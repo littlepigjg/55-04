@@ -14,6 +14,7 @@ from ..metadata_parser import MetadataParser
 from ..metadata_editor import MetadataEditor
 from ..network_source import NetworkSourceManager
 from ..converter import FormatConverter
+from ..reading.tracker import ReadingTracker
 
 from .scanner_panel import ScannerPanel
 from .book_table import BookTableWidget
@@ -21,13 +22,15 @@ from .edit_panel import MetadataEditPanel
 from .search_dialog import OnlineSearchDialog
 from .convert_dialog import ConvertDialog
 from .workers import ScanWorker, ParseWorker
+from .reading_panel import ReadingControlPanel
+from .stats_panel import ReadingStatsPanel
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("📚 电子书元数据管理器")
-        self.setMinimumSize(1200, 700)
+        self.setWindowTitle("📚 电子书管理器 - 阅读习惯追踪")
+        self.setMinimumSize(1400, 800)
 
         self._books: list = []
         self._scanner = BookshelfScanner()
@@ -35,6 +38,7 @@ class MainWindow(QMainWindow):
         self._editor = MetadataEditor()
         self._source_manager = NetworkSourceManager()
         self._converter = FormatConverter()
+        self._reading_tracker = ReadingTracker()
 
         self._init_ui()
         self._init_menu()
@@ -46,26 +50,32 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(8, 8, 8, 8)
 
-        self.scanner_panel = ScannerPanel()
-        self.scanner_panel.scan_requested.connect(self._on_scan_requested)
-        main_layout.addWidget(self.scanner_panel)
+        self.main_tabs = QTabWidget()
+        self.main_tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: none;
+            }
+            QTabBar::tab {
+                background: white;
+                padding: 10px 20px;
+                margin-right: 4px;
+                border-radius: 8px 8px 0 0;
+                font-size: 13px;
+            }
+            QTabBar::tab:selected {
+                background: #4a9eff;
+                color: white;
+                font-weight: bold;
+            }
+        """)
 
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._init_library_tab()
+        self._init_reading_tab()
+        self._init_stats_tab()
 
-        self.book_table = BookTableWidget()
-        self.book_table.selection_changed.connect(self._on_selection_changed)
-        self.book_table.edit_requested.connect(self._on_edit_requested)
-        self.book_table.convert_requested.connect(self._on_convert_requested)
-        self.book_table.search_meta_requested.connect(self._on_search_meta_requested)
-        splitter.addWidget(self.book_table)
+        main_layout.addWidget(self.main_tabs)
 
-        self.edit_panel = MetadataEditPanel()
-        self.edit_panel.save_requested.connect(self._on_save_metadata)
-        splitter.addWidget(self.edit_panel)
-
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
-        main_layout.addWidget(splitter)
+        self.main_tabs.currentChanged.connect(self._on_tab_changed)
 
         self.setStyleSheet("""
             QMainWindow { background: #f5f6fa; }
@@ -156,6 +166,108 @@ class MainWindow(QMainWindow):
     def _init_statusbar(self):
         self.statusBar().showMessage("就绪")
 
+    def _init_library_tab(self):
+        library_widget = QWidget()
+        layout = QVBoxLayout(library_widget)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        self.scanner_panel = ScannerPanel()
+        self.scanner_panel.scan_requested.connect(self._on_scan_requested)
+        layout.addWidget(self.scanner_panel)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        self.book_table = BookTableWidget()
+        self.book_table.selection_changed.connect(self._on_selection_changed)
+        self.book_table.edit_requested.connect(self._on_edit_requested)
+        self.book_table.convert_requested.connect(self._on_convert_requested)
+        self.book_table.search_meta_requested.connect(self._on_search_meta_requested)
+        splitter.addWidget(self.book_table)
+
+        self.edit_panel = MetadataEditPanel()
+        self.edit_panel.save_requested.connect(self._on_save_metadata)
+        splitter.addWidget(self.edit_panel)
+
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter)
+
+        self.main_tabs.addTab(library_widget, "📚 书库")
+
+    def _init_reading_tab(self):
+        reading_widget = QWidget()
+        layout = QHBoxLayout(reading_widget)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+
+        self.reading_book_table = BookTableWidget()
+        self.reading_book_table.selection_changed.connect(self._on_reading_book_selected)
+        left_layout.addWidget(self.reading_book_table)
+
+        splitter.addWidget(left_widget)
+
+        self.reading_control_panel = ReadingControlPanel(self._reading_tracker)
+        self.reading_control_panel.session_started.connect(self._on_session_started)
+        self.reading_control_panel.session_ended.connect(self._on_session_ended)
+        splitter.addWidget(self.reading_control_panel)
+
+        splitter.setStretchFactor(0, 2)
+        splitter.setStretchFactor(1, 1)
+        layout.addWidget(splitter)
+
+        self.main_tabs.addTab(reading_widget, "📖 阅读追踪")
+
+    def _init_stats_tab(self):
+        self.stats_panel = ReadingStatsPanel(self._reading_tracker)
+        self.main_tabs.addTab(self.stats_panel, "📊 统计分析")
+
+    def _on_tab_changed(self, index: int):
+        if index == 1 and hasattr(self, 'reading_book_table'):
+            self.reading_book_table.load_books(self._books)
+        elif index == 2 and hasattr(self, 'stats_panel'):
+            self.stats_panel.refresh_data()
+
+    def _on_reading_book_selected(self, selected: list):
+        if selected:
+            self.reading_control_panel.set_book(selected[0])
+
+    def _on_session_started(self, session_id: int):
+        self.statusBar().showMessage(f"开始阅读会话 #{session_id}")
+
+    def _on_session_ended(self, result: dict):
+        duration = result.get('effective_duration', 0)
+        pages = result.get('pages_read', 0)
+        hours = duration // 3600
+        minutes = (duration % 3600) // 60
+        self.statusBar().showMessage(
+            f"阅读结束: {hours}h{minutes}m, {pages}页"
+        )
+
+    def closeEvent(self, event):
+        if hasattr(self, 'reading_control_panel') and self.reading_control_panel.is_tracking():
+            reply = QMessageBox.question(
+                self, "确认",
+                "正在进行阅读追踪，是否结束当前会话？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                try:
+                    self._reading_tracker.end_reading()
+                except Exception:
+                    pass
+            else:
+                event.ignore()
+                return
+        
+        event.accept()
+
     def _on_scan_requested(self, directories: list, recursive: bool):
         self.statusBar().showMessage("正在扫描目录...")
         self._scan_worker = ScanWorker(directories, recursive)
@@ -179,6 +291,8 @@ class MainWindow(QMainWindow):
     def _on_parse_finished(self, books: list):
         self._books = books
         self.book_table.load_books(books)
+        if hasattr(self, 'reading_book_table'):
+            self.reading_book_table.load_books(books)
         self.statusBar().showMessage(f"已加载 {len(books)} 本电子书")
 
     def _on_selection_changed(self, selected: list):
@@ -274,8 +388,21 @@ class MainWindow(QMainWindow):
     def _show_about(self):
         QMessageBox.about(
             self, "关于",
-            "📚 电子书元数据管理器 v1.0\n\n"
-            "支持 EPUB/MOBI/PDF 元数据编辑与格式转换\n"
+            "📚 电子书管理器 v2.0\n\n"
+            "✨ 核心功能:\n"
+            "  • EPUB/MOBI/PDF 元数据编辑\n"
+            "  • 电子书格式转换\n"
+            "  • 📖 阅读习惯追踪\n"
+            "  • 📊 阅读数据可视化\n"
+            "  • 🎯 阅读目标设定\n"
+            "  • 📥 数据导出 (CSV/JSON)\n\n"
+            "📖 阅读追踪支持:\n"
+            "  • EPUB: 精确定位到章节、段落ID\n"
+            "  • PDF: 页码、文字坐标记录\n"
+            "  • MOBI: 百分比位置追踪\n"
+            "  • 键盘鼠标活动监控\n"
+            "  • 剪贴板轮询捕获\n\n"
             "元数据来源: 豆瓣读书、OpenLibrary\n"
-            "格式转换依赖: Calibre (ebook-convert)"
+            "格式转换依赖: Calibre (ebook-convert)\n"
+            "可视化: matplotlib"
         )
